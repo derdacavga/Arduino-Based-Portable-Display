@@ -1,7 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <WebSocketsServer.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_ST7789.h>
+#include <Adafruit_ST7735.h>
 #include <TJpg_Decoder.h>
 #include <SPI.h>
 
@@ -16,9 +16,9 @@ const int websocket_port = 81;
 //SCL to D5
 
 WebSocketsServer webSocket = WebSocketsServer(websocket_port);
-Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
-#define JPEG_BUFFER_SIZE (32 * 1024)
+#define JPEG_BUFFER_SIZE (34 * 1024) 
 uint8_t* jpeg_buffer = nullptr;
 uint32_t jpeg_buffer_pos = 0;
 uint32_t expected_jpeg_size = 0;
@@ -27,21 +27,30 @@ unsigned long lastFrameTime = 0;
 int frameCount = 0;
 unsigned long lastFpsDisplay = 0;
 
-bool isDecoding = false;
+volatile bool isDecoding = false;
 
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   if (y >= tft.height()) return false;
-
+  
+  uint16_t* ptr = bitmap;
+  for (uint32_t i = 0; i < w * h; i++) {
+    uint16_t color = *ptr;
+    uint16_t r = (color >> 11) & 0x1F; 
+    uint16_t g = (color >> 5) & 0x3F;  
+    uint16_t b = color & 0x1F;     
+    *ptr++ = (b << 11) | (g << 5) | r;  
+  }
+  
   tft.startWrite();
   tft.setAddrWindow(x, y, w, h);
   tft.writePixels(bitmap, w * h);
   tft.endWrite();
-
+  
   return true;
 }
 
 void decodeAndShowJPEG() {
-  TJpgDec.drawJpg(0, 40, jpeg_buffer, expected_jpeg_size);
+  TJpgDec.drawJpg(0, 18, jpeg_buffer, expected_jpeg_size);
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
@@ -52,10 +61,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       tft.setTextColor(ST77XX_RED);
       tft.setTextSize(2);
       tft.println("Disconnected");
+      frameCount = 0;
       break;
+      
     case WStype_CONNECTED:
       {
-        IPAddress ip = webSocket.remoteIP(num);
         tft.fillScreen(ST77XX_BLACK);
         tft.setCursor(15, 50);
         tft.setTextColor(ST77XX_GREEN);
@@ -63,9 +73,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
         tft.println("Connected");
         frameCount = 0;
         lastFpsDisplay = millis();
-        delay(500);
+        delay(300);
         break;
       }
+      
     case WStype_TEXT:
       {
         String text = String((char*)payload);
@@ -79,9 +90,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
         }
         break;
       }
+      
     case WStype_BIN:
-      {
+      { 
         if (isDecoding) return;
+        
         if (expected_jpeg_size == 0 || !jpeg_buffer) {
           return;
         }
@@ -98,42 +111,50 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
           memcpy(jpeg_buffer + jpeg_buffer_pos, payload, copyLen);
           jpeg_buffer_pos += copyLen;
         }
+         
         if (jpeg_buffer_pos >= expected_jpeg_size) {
           isDecoding = true;
           decodeAndShowJPEG();
           isDecoding = false;
+           
           expected_jpeg_size = 0;
           jpeg_buffer_pos = 0;
         }
         break;
       }
+      
     default:
       break;
   }
 }
 
-void setup() {
+void setup() { 
+  SPI.begin();
+  SPI.setFrequency(40000000); 
+   
   jpeg_buffer = (uint8_t*)malloc(JPEG_BUFFER_SIZE);
   if (!jpeg_buffer) {
     while (true) delay(1000);
   }
-  tft.init(240, 280);
-  tft.setSPISpeed(50000000);
+   
+  tft.initR(INITR_GREENTAB);
   tft.setRotation(1);
   tft.fillScreen(ST77XX_BLACK);
-
+ 
   TJpgDec.setJpgScale(1);
   TJpgDec.setSwapBytes(false);
   TJpgDec.setCallback(tft_output);
-
+ 
   tft.setTextColor(ST77XX_CYAN);
   tft.setTextSize(2);
   tft.setCursor(25, 40);
   tft.println("Connecting");
   tft.setCursor(10, 60);
   tft.println("to WiFi");
-
+ 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);  
+  WiFi.setPhyMode(WIFI_PHY_MODE_11N);  
   WiFi.begin(ssid, password);
 
   int attempts = 0;
@@ -161,7 +182,7 @@ void setup() {
 
     tft.setTextSize(1);
     tft.setTextColor(ST77XX_YELLOW);
-    tft.setCursor(25, 100);
+    tft.setCursor(5, 100);
     tft.println("Waiting Connection...");
   } else {
     tft.fillScreen(ST77XX_BLACK);
@@ -171,10 +192,14 @@ void setup() {
     tft.println("WiFi Error!");
     while (true) delay(1000);
   }
+  
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
+  
+  system_update_cpu_freq(160); 
 }
 
 void loop() {
   webSocket.loop();
+  yield(); 
 }
