@@ -14,7 +14,9 @@ I made a portable display with using Esp8266 Micro Processor and St7789 Display.
 ## Using Parts
 
 Wemos D1 Mini Es8266
-St7735 1.8 Inch ddisplay
-Tp4056 Battery Charger
-Lipo Battery
 
+St7735 1.8 Inch ddisplay
+
+Tp4056 Battery Charger
+
+Lipo Battery
